@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Assembly Instruction Code Generator</title>
+  <style>
+    :root{--bg:#0b1220;--card:#071226;--accent:#7c3aed;--muted:#94a3b8;--glass:rgba(255,255,255,0.03)}
+    *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#061021,#07122a);color:#e6eef6}
+    .wrap{max-width:1100px;margin:28px auto;padding:18px}
+    header{display:flex;gap:12px;align-items:center}
+    h1{margin:0;font-size:20px}
+    p.lead{margin:4px 0 14px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:360px 1fr;gap:18px}
+    .card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 10px 30px rgba(2,6,23,0.6)}
+    label{display:block;color:var(--muted);font-size:13px;margin-bottom:6px}
+    textarea{width:100%;height:160px;padding:10px;border-radius:8px;background:transparent;color:inherit;border:1px solid rgba(255,255,255,0.06);resize:vertical}
+    select,input,button{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    button.primary{background:var(--accent);border:none;color:white;font-weight:700;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    pre{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;overflow:auto}
+    .row{display:flex;gap:8px;align-items:center}
+    .pill{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.03);font-weight:700}
+    footer{margin-top:14px;color:var(--muted);font-size:13px;text-align:center}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#06b6d4);display:flex;align-items:center;justify-content:center;font-weight:800;color:#021">AS</div>
+      <div>
+        <h1>Assembly Instruction Code Generator</h1>
+        <p class="lead">Use high-level pseudo-code / simple imperative steps and generate assembly snippets for multiple architectures (x86-64 NASM, ARMv8). Single-file HTML/CSS/JS — no backend.</p>
+      </div>
+    </header>
+
+    <div class="grid" style="margin-top:14px">
+      <aside class="card">
+        <label>Target architecture</label>
+        <select id="arch">
+          <option value="x86_64">x86-64 (NASM / Intel)</option>
+          <option value="arm64">ARMv8 AArch64</option>
+        </select>
+
+        <label style="margin-top:10px">Optimization level</label>
+        <select id="opt">
+          <option value="none">None (readable)</option>
+          <option value="reg">Register-focused</option>
+        </select>
+
+        <label style="margin-top:10px">Input style</label>
+        <select id="style">
+          <option value="pseudo">High-level pseudo (e.g., a = b + c)</option>
+          <option value="steps">Step list (e.g., push 10; call fib)</option>
+        </select>
+
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button id="generate" class="primary">Generate Assembly</button>
+          <button id="explain" class="small">Explain Steps</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Download</label>
+          <div style="display:flex;gap:8px">
+            <button id="downloadAsm" class="small">Download .asm/.s</button>
+            <button id="copyAsm" class="small">Copy to clipboard</button>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Samples</label>
+          <select id="samples">
+            <option value="">-- choose sample --</option>
+            <option value="sum_array">Sum array</option>
+            <option value="factorial">Factorial (iterative)</option>
+            <option value="fibonacci">Fibonacci (recursive-ish)</option>
+          </select>
+        </div>
+
+      </aside>
+
+      <main>
+        <div class="card">
+          <label>High-level input / pseudo-code</label>
+          <textarea id="input">// Example: sum elements of an integer array
+// params: rdi = pointer to array, rsi = length
+sum = 0
+for i from 0 to length-1
+  sum = sum + array[i]
+return sum
+</textarea>
+
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;justify-content:space-between">
+            <div class="small">Status: <span id="status">Idle</span></div>
+            <div class="row"><span class="pill">Lines: <span id="lines">0</span></span></div>
+          </div>
+
+          <div style="margin-top:12px">
+            <label>Generated Assembly</label>
+            <pre id="output" style="min-height:180px">(generated assembly will appear here)</pre>
+          </div>
+
+          <div style="margin-top:12px">
+            <label>Step-by-step Explanation</label>
+            <pre id="explainOut" style="min-height:120px">(explanation appears here)</pre>
+          </div>
+
+        </div>
+      </main>
+    </div>
+
+    <footer>Tip: This generator is template-based and designed for education — it handles common patterns (arithmetic, loops, function prologues). Tell me which architecture or pattern you'd like next.</footer>
+  </div>
+
+  <script>
+    // Utility helpers
+    const el = id => document.getElementById(id);
+    function setStatus(s){ el('status').textContent = s }
+
+    function countLines(){ el('lines').textContent = el('input').value.split(/\r?\n/).length }
+    el('input').addEventListener('input', countLines);
+    countLines();
+
+    // Simple parser for very small subset of pseudo-code -> intermediate representation
+    function parsePseudo(text){
+      // normalize
+      const lines = text.split(/\r?\n/).map(l=>l.replace(/\/\/.*$/,'').trim()).filter(Boolean);
+      const ir = [];
+      for(const line of lines){
+        // assignments: a = b + c  or sum = sum + array[i]
+        let m;
+        if(m=line.match(/^([a-zA-Z_][\w]*)\s*=\s*(.+)$/)){
+          ir.push({type:'assign', left:m[1], expr:m[2].trim(), raw:line});
+          continue;
+        }
+        if(m=line.match(/^for\s+([a-zA-Z_][\w]*)\s+from\s+(\d+)\s+to\s+([a-zA-Z_][\w]*)(?:-(\d+))?/i)){
+          ir.push({type:'for', var:m[1], start:parseInt(m[2]), endVar:m[3], endOffset: m[4]?parseInt(m[4]):0, raw:line});
+          continue;
+        }
+        if(m=line.match(/^return\s+(.+)$/i)){
+          ir.push({type:'return', expr:m[1].trim(), raw:line}); continue;
+        }
+        // simple statements: push 10, call foo
+        if(m=line.match(/^(push|pop|call|ret|cmp|jmp|je|jne)\b(.*)$/i)){
+          ir.push({type:'stmt', op:m[1].toLowerCase(), arg:m[2].trim(), raw:line}); continue;
+        }
+        // fall back: raw
+        ir.push({type:'raw', raw:line});
+      }
+      return ir;
+    }
+
+    // Generators for x86-64 (NASM) and arm64 (AArch64)
+    function gen_x86_64(ir, options){
+      // very simple mapping. We'll use System V calling convention for Linux.
+      const lines = [];
+      lines.push('; x86-64 (NASM) generated - System V ABI');
+      lines.push('global _start_or_func');
+      lines.push('section .text');
+      lines.push('');
+      // We'll emit a named function 'gen_func'
+      lines.push('gen_func:');
+      lines.push('  push rbp');
+      lines.push('  mov rbp, rsp');
+      // allocate locals if needed (naive)
+      let labelCounter=0;
+      for(const node of ir){
+        if(node.type==='assign'){
+          // naive: support numeric addition of registers or array access like array[i]
+          const left = node.left;
+          const expr = node.expr;
+          // case: sum = sum + array[i]
+          const arrMatch = expr.match(/^([a-zA-Z_][\w]*)\[(.+)\]$/);
+          const addMatch = expr.match(/^([a-zA-Z_][\w]*)\s*\+\s*(.+)$/);
+          if(addMatch){
+            // build: mov rax, [array + index*4] or mov rax, [rdi + rsi*4]
+            const a = addMatch[1]; const b = addMatch[2];
+            if(b.match(/^[a-zA-Z_][\w]*\[.+\]$/)){
+              // handle array access on right
+              const m = b.match(/^([a-zA-Z_][\w]*)\[(.+)\]$/);
+              // assume array pointer in rdi and index in rsi (for demo)
+              lines.push('  ; ' + node.raw);
+              lines.push('  mov rax, 0');
+              lines.push('  ; load array element (assumes 4-byte ints, pointer in rdi, index in rsi)');
+              lines.push('  mov rdx, [' + m[1] + ']  ; (placeholder, replace with actual address)');
+              lines.push('  ; NOTE: automated translation is approximate');
+              continue;
+            }
+            // fallback: do an add with immediate or register
+            lines.push('  ; ' + node.raw);
+            lines.push('  mov rax, ' + a);
+            lines.push('  add rax, ' + b);
+            lines.push('  mov [' + left + '], rax  ; store result (placeholder)');
+            continue;
+          }
+          // simple assign: a = 5
+          if(!isNaN(expr)){
+            lines.push('  ; ' + node.raw);
+            lines.push('  mov qword ['+left+'], ' + expr + '  ; store immediate (placeholder)');
+            continue;
+          }
+          // fallback
+          lines.push('  ; unrecognized assign: ' + node.raw);
+        } else if(node.type==='for'){
+          lines.push('  ; ' + node.raw);
+          const start = node.start; const endExpr = node.endVar + (node.endOffset?(' - '+node.endOffset):'');
+          const lb = 'L' + (++labelCounter);
+          const le = 'L' + (++labelCounter);
+          lines.push('  mov rcx, ' + start);
+          lines.push(lb + ':');
+          lines.push('  cmp rcx, ' + node.endVar);
+          lines.push('  jg ' + le);
+          lines.push('  ; loop body (translate inner lines manually)');
+          lines.push('  inc rcx');
+          lines.push('  jmp ' + lb);
+          lines.push(le + ':');
+        } else if(node.type==='return'){
+          lines.push('  ; ' + node.raw);
+          lines.push('  mov rax, ' + node.expr + '  ; return value in rax (placeholder)');
+          lines.push('  mov rsp, rbp');
+          lines.push('  pop rbp');
+          lines.push('  ret');
+        } else {
+          lines.push('; ' + node.raw + '  ; (untranslated)');
+        }
+      }
+      // if no explicit return
+      if(!ir.some(n=>n.type==='return')){
+        lines.push('  mov rsp, rbp');
+        lines.push('  pop rbp');
+        lines.push('  ret');
+      }
+      return lines.join('\n');
+    }
+
+    function gen_arm64(ir, options){
+      const lines=[];
+      lines.push('; ARMv8-A AArch64 generated - System V-like ABI');
+      lines.push('.text');
+      lines.push('.global gen_func');
+      lines.push('gen_func:');
+      lines.push('  stp x29, x30, [sp, #-16]!');
+      lines.push('  mov x29, sp');
+      let labelCounter=0;
+      for(const node of ir){
+        if(node.type==='assign'){
+          lines.push('  ; ' + node.raw);
+          // naive: a = b + c
+          const addMatch = node.expr.match(/^([a-zA-Z_][\w]*)\s*\+\s*(.+)$/);
+          if(addMatch){
+            lines.push('  // approximate translation: load operands and add');
+            lines.push('  // mov x0, <'+addMatch[1]+'-like>');
+            lines.push('  // add x0, x0, <'+addMatch[2]+'-like>');
+            lines.push('  // str x0, [<'+node.left+'>]');
+            continue;
+          }
+          if(!isNaN(node.expr)){
+            lines.push('  mov x0, #' + node.expr);
+            lines.push('  // str x0, [<'+node.left+'>]  ; store (placeholder)');
+            continue;
+          }
+          lines.push('  // unrecognized assign: ' + node.raw);
+        } else if(node.type==='for'){
+          lines.push('  ; ' + node.raw);
+          const lb = 'L' + (++labelCounter);
+          const le = 'L' + (++labelCounter);
+          lines.push('  mov x1, #' + node.start);
+          lines.push(lb + ':');
+          lines.push('  cmp x1, #' + node.endVar);
+          lines.push('  b.gt ' + le);
+          lines.push('  // loop body (manual)');
+          lines.push('  add x1, x1, #1');
+          lines.push('  b ' + lb);
+          lines.push(le + ':');
+        } else if(node.type==='return'){
+          lines.push('  ; ' + node.raw);
+          lines.push('  mov x0, #' + node.expr + '  // placeholder');
+          lines.push('  mov sp, x29');
+          lines.push('  ldp x29, x30, [sp], #16');
+          lines.push('  ret');
+        } else {
+          lines.push('; ' + node.raw + '  ; (untranslated)');
+        }
+      }
+      if(!ir.some(n=>n.type==='return')){
+        lines.push('  mov sp, x29');
+        lines.push('  ldp x29, x30, [sp], #16');
+        lines.push('  ret');
+      }
+      return lines.join('\n');
+    }
+
+    // High-level generate function
+    function generate(){
+      setStatus('Parsing...');
+      const text = el('input').value;
+      const ir = parsePseudo(text);
+      setStatus('Generating...');
+      const arch = el('arch').value;
+      let asm='';
+      if(arch==='x86_64') asm = gen_x86_64(ir, {});
+      else if(arch==='arm64') asm = gen_arm64(ir, {});
+      el('output').textContent = asm;
+      el('explainOut').textContent = explainIR(ir);
+      setStatus('Ready');
+    }
+
+    function explainIR(ir){
+      const lines = ['Parsed intermediate representation:\n'];
+      for(const n of ir){
+        lines.push(JSON.stringify(n));
+      }
+      lines.push('\nNotes:');
+      lines.push('- This generator handles simple patterns and emits \n  approximate assembly templates.');
+      lines.push('- Array accesses, complex expressions, and real memory layout require manual edits.');
+      return lines.join('\n');
+    }
+
+    // samples
+    const samples = {
+      sum_array: `// Sum array
+// params: rdi = ptr to array, rsi = length
+sum = 0
+for i from 0 to length-1
+  sum = sum + array[i]
+return sum`,
+      factorial: `// Factorial iterative
+n = rdi
+result = 1
+for i from 2 to n
+  result = result * i
+return result`,
+      fibonacci: `// Fibonacci (naive iterative)
+if n <= 1
+  return n
+prev = 0
+cur = 1
+for i from 2 to n
+  tmp = cur
+  cur = cur + prev
+  prev = tmp
+return cur`
+    };
+    el('samples').addEventListener('change', e=>{const v=e.target.value; if(v&&samples[v]) el('input').value=samples[v]; countLines();});
+
+    // download / copy
+    el('downloadAsm').addEventListener('click', ()=>{
+      const arch = el('arch').value; const asm = el('output').textContent;
+      const blob = new Blob([asm], {type:'text/plain'});
+      const fname = arch==='x86_64' ? 'gen_func.asm' : 'gen_func.s';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+    el('copyAsm').addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(el('output').textContent); alert('Copied!') }catch(e){ alert('Copy failed: '+e.message) } });
+
+    el('generate').addEventListener('click', generate);
+    el('explain').addEventListener('click', ()=>{ const text = el('input').value; const ir = parsePseudo(text); el('explainOut').textContent = explainIR(ir); });
+
+    // initial
+    setStatus('Ready');
+  </script>
+</body>
+</html>
